@@ -111,6 +111,11 @@ fun FilmStudioHome() {
     var sceneProps by remember { mutableStateOf("") }
     var previousEnd by remember { mutableStateOf("") }
     var nextStart by remember { mutableStateOf("") }
+    var videoServerUrl by remember { mutableStateOf("") }
+    var videoServerToken by remember { mutableStateOf("") }
+    var videoPrompt by remember { mutableStateOf("") }
+    var videoJobId by remember { mutableStateOf("") }
+    var videoJobStatus by remember { mutableStateOf("") }
     var feedback by remember { mutableStateOf("") }
     var geminiApiKey by remember { mutableStateOf("") }
     var aiBusy by remember { mutableStateOf(false) }
@@ -330,6 +335,57 @@ fun FilmStudioHome() {
                     item { InfoCard("Sınır", "Bu özellik metni telefona okutur; MP3/WAV dosyası dışa aktarmaz ve dudak senkronizasyonu üretmez.") }
                 }
                 StudioScreen.VIDEO -> {
+                    item { SectionLabel("GERÇEK VİDEO SUNUCUSU") }
+                    item { StudioField("Video sunucusu HTTPS adresi", videoServerUrl, { videoServerUrl = it }, "Örn. https://video-sunucum.example.com") }
+                    item { StudioField("Sunucu erişim anahtarı", videoServerToken, { videoServerToken = it }, "Sunucuda tanımladığın VIDEO_API_TOKEN") }
+                    item { StudioField("Video sahne açıklaması", videoPrompt, { videoPrompt = it }, "Yağmurlu gecede küçük beyaz bir köpek yavrusu sokakta yürür; sinematik gerçekçilik.", 4) }
+                    item {
+                        PrimaryAction(if (aiBusy) "İstek gönderiliyor..." else "Sunucuya video üretim işi gönder") {
+                            if (videoServerUrl.isBlank() || videoServerToken.isBlank() || videoPrompt.length < 8) {
+                                feedback = "HTTPS sunucu adresini, erişim anahtarını ve en az 8 karakterlik sahne açıklamasını gir."
+                            } else {
+                                aiBusy = true
+                                feedback = "Video üretim işi sunucuya gönderiliyor..."
+                                scope.launch {
+                                    val result = runCatching {
+                                        VideoGenerationService.createJob(videoServerUrl, videoServerToken, videoPrompt)
+                                    }
+                                    aiBusy = false
+                                    result.onSuccess {
+                                        videoJobId = it.id
+                                        videoJobStatus = it.status
+                                        feedback = "İş kuyruğa eklendi. İş numarası: ${it.id}"
+                                    }.onFailure {
+                                        feedback = "Sunucu bağlantı hatası: ${it.message ?: "İstek tamamlanamadı"}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        if (videoJobId.isNotBlank()) {
+                            PrimaryAction(if (aiBusy) "Durum sorgulanıyor..." else "Video üretim durumunu kontrol et") {
+                                if (videoServerUrl.isBlank() || videoServerToken.isBlank()) {
+                                    feedback = "Sunucu adresi ve erişim anahtarı gerekli."
+                                } else {
+                                    aiBusy = true
+                                    scope.launch {
+                                        val result = runCatching {
+                                            VideoGenerationService.getJob(videoServerUrl, videoServerToken, videoJobId)
+                                        }
+                                        aiBusy = false
+                                        result.onSuccess {
+                                            videoJobStatus = it.status
+                                            feedback = if (it.error != null) "Üretim hatası: ${it.error}" else "Video işi durumu: ${it.status}"
+                                        }.onFailure {
+                                            feedback = "Durum sorgulanamadı: ${it.message ?: "Bağlantı hatası"}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item { if (videoJobId.isNotBlank()) InfoCard("Video işi", "İş numarası: $videoJobId; Durum: $videoJobStatus") }
                     item { SectionLabel("SAHNE VE DEVAMLILIK") }
                     item { StudioField("Mekân", sceneLocation, { sceneLocation = it }, "Örn. yağmurlu bir sokak") }
                     item { StudioField("Işık", sceneLighting, { sceneLighting = it }, "Örn. gece, soğuk mavi ışık") }
@@ -350,7 +406,8 @@ fun FilmStudioHome() {
                         }
                     }
                     item { FeedbackText(feedback) }
-                    item { InfoCard("Video üretimi", "Bu sürüm sahne notlarını ve metin tabanlı devamlılığı yönetir. Gerçek video oluşturma, sahne birleştirme ve MP4 dışa aktarma henüz bağlı değildir.") }
+                    item { FeedbackText(feedback) }
+                    item { InfoCard("Video sunucusu durumu", "Android tarafında sunucuya iş gönderme ve durum sorgulama bağlantısı hazırlandı. Gerçek üretim için video-server klasörünün GPU sunucusuna HTTPS üzerinden kurulması ve erişim anahtarının tanımlanması gerekir. Bu sürüm henüz MP4 dosyasını uygulama içine indirmez.") }
                 }
             }
         }
