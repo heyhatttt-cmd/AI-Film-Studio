@@ -36,7 +36,18 @@ jobs:
             echo "Android sdkmanager was not found under ANDROID_HOME=$ANDROID_HOME"
             exit 1
           fi
+          # sdkmanager may finish before 'yes' does, causing a harmless
+          # SIGPIPE (Broken pipe). Ignore the producer's exit code but
+          # preserve and check sdkmanager's actual exit status.
+          set +o pipefail
           yes | "$SDKMANAGER" --licenses >/dev/null
+          LICENSE_STATUS=${PIPESTATUS[1]}
+          set -o pipefail
+          if [ "$LICENSE_STATUS" -ne 0 ]; then
+            echo "Android SDK license acceptance failed with exit code $LICENSE_STATUS"
+            exit "$LICENSE_STATUS"
+          fi
+
           "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build debug APK
