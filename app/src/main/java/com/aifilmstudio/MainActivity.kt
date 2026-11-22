@@ -1,6 +1,15 @@
 package com.aifilmstudio
 
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.content.Intent
+import android.net.Uri
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.Locale
+import androidx.compose.runtime.DisposableEffect
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -52,7 +61,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.UUID
 
 private val Ink = Color(0xFF101322)
 private val Panel = Color(0xFF1B2033)
@@ -103,6 +111,28 @@ fun FilmStudioHome() {
     var previousEnd by remember { mutableStateOf("") }
     var nextStart by remember { mutableStateOf("") }
     var feedback by remember { mutableStateOf("") }
+    var geminiApiKey by remember { mutableStateOf("") }
+    var aiBusy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var ttsReady by remember { mutableStateOf(false) }
+    var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
+
+    DisposableEffect(context) {
+        val engine = TextToSpeech(context) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS &&
+                (ttsEngine?.isLanguageAvailable(Locale("tr", "TR")) ?: TextToSpeech.LANG_NOT_SUPPORTED) >= TextToSpeech.LANG_AVAILABLE
+            if (status == TextToSpeech.SUCCESS) {
+                ttsEngine?.language = Locale("tr", "TR")
+            }
+        }
+        ttsEngine = engine
+        onDispose {
+            engine.stop()
+            engine.shutdown()
+            ttsEngine = null
+            ttsReady = false
+        }
+    }
 
     Scaffold(
         containerColor = Ink,
@@ -190,7 +220,7 @@ fun FilmStudioHome() {
                             "Video stüdyosu", "Sahne bilgilerini düzenle ve devamlılık denetimi yap.") { screen = StudioScreen.VIDEO }
                     }
                     item {
-                        InfoCard("Bilgi", "Bu sürümde proje taslağı, senaryo metni ve karakter hafızası cihazında saklanır. Yapay zekâ video üretimi ve gerçek seslendirme servisi henüz bağlı değildir.")
+                        InfoCard("Bağlı servisler", "Gemini senaryo üretimi API anahtarı girildiğinde çalışır. Türkçe metin-ses telefonundaki Android TTS motoruyla çalışır. Video üretimi için ücretsiz ve güvenilir bir kota henüz doğrulanmadı.")
                     }
                 }
                 StudioScreen.PROJECT -> {
@@ -209,6 +239,35 @@ fun FilmStudioHome() {
                     item { SectionLabel("SENARYO ATÖLYESİ") }
                     item { StudioField("Hikâye fikri", projectIdea, { projectIdea = it }, "Hikâyenin ana fikrini yaz.", 4) }
                     item { StudioField("Senaryo / sahne metni", script, { script = it }, "Sahne başlığı, açıklama ve diyaloglarını buraya yaz.", 7) }
+                    item { StudioField("Gemini API anahtarı (bu oturumda kullanılır)", geminiApiKey, { geminiApiKey = it }, "Google AI Studio anahtarını buraya yapıştır.") }
+                    item {
+                        TextButton(onClick = {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey")))
+                        }) { Text("Ücretsiz Gemini API anahtarı al") }
+                    }
+                    item {
+                        PrimaryAction(if (aiBusy) "Senaryo hazırlanıyor..." else "Gemini ile senaryo oluştur") {
+                            if (geminiApiKey.isBlank() || projectIdea.isBlank()) {
+                                feedback = "Önce hikâye fikrini ve Gemini API anahtarını gir."
+                            } else {
+                                aiBusy = true
+                                feedback = "Gemini'ye bağlanılıyor..."
+                                scope.launch {
+                                    val result = runCatching {
+                                        GeminiTextService.generateScript(geminiApiKey.trim(), projectIdea)
+                                    }
+                                    aiBusy = false
+                                    result.onSuccess {
+                                        script = it
+                                        preferences.edit().putString("idea", projectIdea).putString("script", it).apply()
+                                        feedback = "Gemini senaryoyu oluşturdu ve taslağa kaydetti."
+                                    }.onFailure {
+                                        feedback = "Bağlantı hatası: ${it.message ?: "İstek tamamlanamadı"}"
+                                    }
+                                }
+                            }
+                        }
+                    }
                     item {
                         PrimaryAction("Senaryoyu kaydet") {
                             preferences.edit().putString("idea", projectIdea).putString("script", script).apply()
@@ -216,7 +275,7 @@ fun FilmStudioHome() {
                         }
                     }
                     item { FeedbackText(feedback) }
-                    item { InfoCard("Not", "Bu ekranda metinleri kendin yazıp kaydedebilirsin. Otomatik yapay zekâ senaryo üretimi servis bağlantısı gerektirir.") }
+                    item { InfoCard("Ücretsiz kullanım notu", "Gemini ücretsiz kotası ve erişilebilir model durumuna bağlıdır. Bu uygulama ücretli servise otomatik geçmez. Google hesabında faturalandırma açıksa kota aşımında ücret doğabilir. API anahtarı bu ekranda tutulur, uygulama tarafından kalıcı kaydedilmez. Ücretsiz katmanda gönderdiğin içerikler Google tarafından ürün geliştirmede kullanılabilir.") }
                 }
                 StudioScreen.CHARACTER -> {
                     item { SectionLabel("KARAKTER HAFIZASI") }
@@ -247,13 +306,27 @@ fun FilmStudioHome() {
                     item { StudioField("Seslendirme / diyalog metni", voiceText, { voiceText = it }, "Karakterin söyleyeceği metni yaz.", 6) }
                     item { StudioField("Karakterin ses tarifi", voiceDescription, { voiceDescription = it }, "Ses tonu ve konuşma biçimi", 2) }
                     item {
+                        PrimaryAction("Metni Türkçe seslendir") {
+                            val engine = ttsEngine
+                            if (voiceText.isBlank()) {
+                                feedback = "Önce seslendirilecek metni yaz."
+                            } else if (!ttsReady || engine == null) {
+                                feedback = "Türkçe ses motoru hazır değil. Telefon ayarlarından Türkçe TTS ses verisini yükle."
+                            } else {
+                                val result = engine.speak(voiceText, TextToSpeech.QUEUE_FLUSH, null, "aifilm_voice")
+                                feedback = if (result == TextToSpeech.SUCCESS) "Telefonun Türkçe ses motoru konuşmayı başlattı." else "Seslendirme başlatılamadı."
+                            }
+                        }
+                    }
+                    item {
                         PrimaryAction("Ses metnini kaydet") {
                             preferences.edit().putString("voice_text", voiceText).putString("voice_description", voiceDescription).apply()
-                            feedback = "Seslendirme metni kaydedildi. Henüz ses dosyası üretilmedi."
+                            feedback = "Seslendirme metni kaydedildi."
                         }
                     }
                     item { FeedbackText(feedback) }
-                    item { InfoCard("Servis durumu", "Bu bölüm metin hazırlama içindir. Gerçek Türkçe ses dosyası üretimi ve dudak senkronizasyonu henüz bağlı değildir.") }
+                    item { InfoCard("Servis durumu", if (ttsReady) "Android Türkçe metin-ses motoru hazır. Seslendirme cihazındaki yüklü sese bağlıdır." else "Türkçe TTS motoru bulunamadı veya henüz hazır değil. Telefon ayarlarından Metin okuma / Text-to-speech bölümünde Türkçe ses verisi yükle.") }
+                    item { InfoCard("Sınır", "Bu özellik metni telefona okutur; MP3/WAV dosyası dışa aktarmaz ve dudak senkronizasyonu üretmez.") }
                 }
                 StudioScreen.VIDEO -> {
                     item { SectionLabel("SAHNE VE DEVAMLILIK") }
