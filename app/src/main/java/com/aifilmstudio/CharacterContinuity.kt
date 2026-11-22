@@ -1,7 +1,6 @@
 package com.aifilmstudio
 
 import android.content.Context
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -130,9 +129,9 @@ object SceneContinuityChecker {
         compare("Işık", previous.lighting, next.lighting, issues)
         compare("Nesne/aksesuar konumu", previous.props, next.props, issues)
 
-        if (previous.nextStartState.isNotBlank() &&
-            next.previousEndState.isNotBlank() &&
-            normalize(previous.nextStartState) != normalize(next.previousEndState)
+        if (previous.previousEndState.isNotBlank() &&
+            next.nextStartState.isNotBlank() &&
+            normalize(previous.previousEndState) != normalize(next.nextStartState)
         ) {
             issues += "Hareket devamlılığı açıklamaları birbiriyle uyuşmuyor."
         }
