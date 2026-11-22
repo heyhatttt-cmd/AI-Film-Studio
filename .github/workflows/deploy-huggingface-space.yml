@@ -1,0 +1,40 @@
+name: Deploy video generator to Hugging Face Space
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "huggingface-space/**"
+      - ".github/workflows/deploy-huggingface-space.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deployment secrets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: ${{ secrets.HF_SPACE_REPO }}
+        run: |
+          test -n "$HF_TOKEN" || { echo "Missing HF_TOKEN repository secret"; exit 1; }
+          test -n "$HF_SPACE_REPO" || { echo "Missing HF_SPACE_REPO repository secret"; exit 1; }
+
+      - name: Install Hugging Face Hub CLI
+        run: python -m pip install --upgrade huggingface_hub
+
+      - name: Upload Space source
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: ${{ secrets.HF_SPACE_REPO }}
+        run: |
+          hf upload "$HF_SPACE_REPO" huggingface-space . \
+            --repo-type space \
+            --token "$HF_TOKEN" \
+            --commit-message "Deploy AI Film Studio Wan 2.2 video generator"
